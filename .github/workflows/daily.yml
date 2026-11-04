@@ -1,0 +1,33 @@
+name: EE new companies
+
+on:
+  schedule:
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Registered within last N days"
+        default: "3"
+      emtak:
+        description: "Comma-separated EMTAK codes"
+        default: "73111"
+
+jobs:
+  find-and-send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Find new companies and send them to n8n
+        env:
+          N8N_WEBHOOK_URL: ${{ secrets.N8N_WEBHOOK_URL }}
+          DAYS: ${{ github.event.inputs.days || '3' }}
+          EMTAK: ${{ github.event.inputs.emtak || '73111' }}
+        run: |
+          test -n "$N8N_WEBHOOK_URL" || { echo "Secret N8N_WEBHOOK_URL is not set"; exit 1; }
+          python ariregister_new_companies.py --emtak "$EMTAK" --days "$DAYS" --webhook "$N8N_WEBHOOK_URL"
