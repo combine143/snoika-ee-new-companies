@@ -1,0 +1,43 @@
+name: Discover persons file
+on:
+  workflow_dispatch:
+jobs:
+  d:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download and inspect persons file
+        run: |
+          curl -sSL -A "snoika-ee-new-companies/1.0" -o p.zip "https://avaandmed.ariregister.rik.ee/sites/default/files/avaandmed/ettevotja_rekvisiidid__kaardile_kantud_isikud.json.zip"
+          ls -la p.zip
+          python3 - <<'EOF'
+          import zipfile, collections
+          z = zipfile.ZipFile("p.zip")
+          for i in z.infolist():
+              print("FILE", i.filename, i.file_size)
+          n = [i.filename for i in z.infolist() if i.filename.endswith(".json")][0]
+          with z.open(n) as f:
+              print("HEAD", f.read(2500).decode("utf-8", "replace"))
+          want = ["17645273", "17645971", "17643707"]
+          done = set()
+          last = collections.deque(maxlen=3)
+          with z.open(n) as f:
+              pending = 0
+              for raw in f:
+                  line = raw.decode("utf-8", "replace").rstrip()
+                  if pending > 0:
+                      print(line)
+                      pending -= 1
+                      continue
+                  last.append(line)
+                  for w in want:
+                      if w not in done and w in line:
+                          done.add(w)
+                          print("=== MATCH", w)
+                          for l in last:
+                              print(l)
+                          pending = 70
+                          break
+                  if len(done) == len(want) and pending == 0:
+                      break
+          EOF
