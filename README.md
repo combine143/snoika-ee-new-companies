@@ -1,8 +1,7 @@
 # snoika-ee-new-companies
 
 Every day at 12:00 UTC a GitHub Action downloads the Äriregister open-data file (general data, JSON),
-streams it without unpacking, picks Estonian companies registered in the last few days with the given
-EMTAK code, looks up the board member's first name in the "persons on registry card" file (only when the
+streams it without unpacking, picks Estonian companies registered in the last few days that are not on the avoid list (or have the given EMTAK code), looks up the board member's first name in the "persons on registry card" file (only when the
 company has exactly one active natural-person board member) and POSTs them to an n8n webhook. n8n removes ones it has already seen and stores new ones in
 the data table `ee_new_companies`.
 
@@ -11,7 +10,10 @@ the data table `ee_new_companies`.
 2. Check the run: Actions tab, workflow "EE new companies", Run workflow.
 
 ## Change what is searched
-- Default EMTAK is `73111` (advertising agencies). Change it in the manual run form or edit `daily.yml`.
+- By default every new OÜ is taken EXCEPT those whose main EMTAK code is on the avoid list (`DEFAULT_EXCLUDE` in
+  the script: holding/property/shell companies, gig workers and solo trades, no-fit sectors, freelancer-type
+  IT/consulting/trading codes). The register uses EMTAK 2025, so the list is translated from the old codes.
+- To target specific codes instead, pass them in the manual run form (`emtak`, e.g. `73111`); the avoid list is then ignored.
 - Window is 3 days; days overlap on purpose and n8n deduplicates by registry code.
 - Legal forms: `--forms` (default `OÜ`).
 - Contact name: fields `first_name`, `contact_name`, `board_members`; `--no-persons` skips the lookup.

@@ -41,6 +41,23 @@ URL = BASE + "ettevotja_rekvisiidid__yldandmed.json.zip"
 PERSONS_URL = BASE + "ettevotja_rekvisiidid__kaardile_kantud_isikud.json.zip"
 CODE_RE = re.compile(r'"ariregistri_kood"\s*:\s*"?(\d+)')
 
+# EMTAK code prefixes to skip when --emtak is empty. The register uses EMTAK 2025, so the
+# old (EMTAK 2008) codes of the avoid list are translated, e.g.
+#   62.01 -> 6210 (programming), 62.02 -> 622, 70.22 -> 7020, 74.90 -> 7499,
+#   49.32 taxi -> 4932 + 4933 (ride-hailing / on-demand with driver), 96.02 -> 9621 + 9622,
+#   68.1 -> 681 (incl. building project development), 46.1 -> 461, 46.90 -> 4690.
+DEFAULT_EXCLUDE = (
+    # holding, property and shell companies
+    "642", "643", "649", "66", "681", "682", "701", "8299",
+    # gig workers and solo trades
+    "4932", "4933", "532", "4941", "41", "43", "812", "9602", "9621", "9622",
+    # no fit
+    "01", "02", "03", "05", "06", "07", "08", "09", "35", "36", "37", "38", "39",
+    "84", "94", "97", "98", "99",
+    # mixed (deprioritized): freelancers, consultants, trading shells
+    "6210", "622", "7020", "7499", "461", "4690",
+)
+
 
 def pdate(s):
     try:
@@ -127,15 +144,22 @@ def contact_from(rec):
     return "", "", count
 
 
-def pick(rec, codes, forms, cutoff):
+def pick(rec, codes, forms, cutoff, exclude=()):
     g = rec.get("yldandmed") or {}
     if g.get("staatus") != "R" or g.get("oiguslik_vorm") not in forms:
         return None
     reg = pdate(g.get("esmaregistreerimise_kpv"))
     if not reg or reg < cutoff:
         return None
-    acts = [a for a in (g.get("teatatud_tegevusalad") or []) if not a.get("lopp_kpv")]
-    hit = [a for a in acts if a.get("emtak_kood") in codes]
+    acts = [a for a in (g.get("teatatud_tegevusalad") or [])
+            if not a.get("lopp_kpv") and a.get("emtak_kood")]
+    if not acts:
+        return None
+    main = next((a for a in acts if a.get("on_pohitegevusala")), acts[0])
+    if codes:
+        hit = [a for a in acts if a.get("emtak_kood") in codes]
+    else:
+        hit = [] if str(main["emtak_kood"]).startswith(tuple(exclude)) else [main]
     if not hit:
         return None
     emails, www = [], []
@@ -195,7 +219,11 @@ def add_contacts(results, persons_path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--emtak", default="73111", help="comma-separated EMTAK codes")
+    ap.add_argument("--emtak", default="",
+                    help="comma-separated EMTAK codes; empty = every code except the avoid list")
+    ap.add_argument("--exclude", default=",".join(DEFAULT_EXCLUDE),
+                    help="comma-separated EMTAK prefixes to skip when --emtak is empty")
+    ap.add_argument("--no-exclude", action="store_true", help="do not skip any EMTAK code")
     ap.add_argument("--days", type=int, default=3, help="registered within last N days")
     ap.add_argument("--forms", default="OÜ", help="comma-separated legal forms (OÜ,UÜ,AS,...)")
     ap.add_argument("--zip-path", help="use a local general-data zip instead of downloading")
@@ -205,7 +233,8 @@ def main():
     ap.add_argument("--webhook", help="POST the results as JSON to this URL (e.g. n8n)")
     a = ap.parse_args()
 
-    codes = {c.strip() for c in a.emtak.split(",")}
+    codes = {c.strip() for c in a.emtak.split(",") if c.strip()}
+    exclude = () if a.no_exclude else tuple(p.strip() for p in a.exclude.split(",") if p.strip())
     forms = {f.strip() for f in a.forms.split(",")}
     cutoff = date.today() - timedelta(days=a.days)
 
@@ -221,13 +250,14 @@ def main():
             with zf.open(first_json(zf)) as fh:
                 for rec in iter_records(fh):
                     scanned += 1
-                    row = pick(rec, codes, forms, cutoff)
+                    row = pick(rec, codes, forms, cutoff, exclude)
                     if row:
                         results.append(row)
 
         results.sort(key=lambda r: r["registered"], reverse=True)
+        scope = ",".join(sorted(codes)) if codes else f"all except {len(exclude)} avoided prefixes"
         print(f"scanned {scanned} companies, matched {len(results)} "
-              f"(EMTAK {','.join(sorted(codes))}, forms {','.join(sorted(forms))}, since {cutoff})",
+              f"(EMTAK {scope}, forms {','.join(sorted(forms))}, since {cutoff})",
               file=sys.stderr)
 
         if results and not a.no_persons:
