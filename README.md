@@ -1,8 +1,8 @@
 # snoika-ee-new-companies
 
 Every day at 12:00 UTC a GitHub Action downloads the Äriregister open-data file (general data, JSON),
-streams it without unpacking, picks Estonian companies registered in the last few days that are not on the avoid list (or have the given EMTAK code), looks up the board member's first name in the "persons on registry card" file (only when the
-company has exactly one active natural-person board member) and POSTs them to an n8n webhook. n8n removes ones it has already seen and stores new ones in
+streams it without unpacking, picks Estonian companies registered in the last few days that are not on the avoid list (or have the given EMTAK code), looks up the board member's first name in the "persons on registry card" file (always one person: the sole
+active board member, or with 2+ members the one whose name matches the email address, else the first listed) and POSTs them to an n8n webhook. n8n removes ones it has already seen and stores new ones in
 the data table `ee_new_companies`.
 
 ## Setup

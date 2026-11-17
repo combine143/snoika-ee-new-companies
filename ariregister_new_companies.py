@@ -153,12 +153,12 @@ def person_full(p):
 
 
 def contact_from(rec, emails=()):
-    """Return (first_name, full_name, board_members) for one record of the persons file.
+    """Return (first_name, full_name, board_members): always ONE person.
 
-    One active natural-person board member (role JUHL): that person. Several: the one whose
-    name matches the mailbox (e.g. maarouf.sara@ -> Sara Maarouf), otherwise all of them
-    joined with " ja " (up to 3). With more than 3 people only a mailbox match counts. A legal
-    entity on the board, or no match among more than 3 people: empty.
+    Active natural-person board members (role JUHL) are the candidates. One candidate: that
+    person, no email matching. Two or more: the one whose name matches the mailbox
+    (e.g. maarouf.sara@ -> Sara Maarouf); if none (or a tie) matches, the first listed.
+    No natural-person board member (e.g. only a legal entity): empty.
     """
     people, seen = [], set()
     for p in rec.get("kaardile_kantud_isikud") or []:
@@ -170,22 +170,19 @@ def contact_from(rec, emails=()):
         seen.add(key)
         people.append(p)
     count = len(people)
-    if not people or any(p.get("isiku_tyyp") != "F" or not p.get("eesnimi") for p in people):
+    people = [p for p in people if p.get("isiku_tyyp") == "F" and p.get("eesnimi")]
+    if not people:
         return "", "", count
-    if count == 1:
-        return person_first(people[0]), person_full(people[0]), count
-    for em in emails:
-        local = ascii_low(em.split("@")[0])
-        scores = [email_score(p, local) for p in people]
-        best = max(scores)
-        if best > 0 and scores.count(best) == 1:
-            p = people[scores.index(best)]
-            return person_first(p), person_full(p), count
-    if count > 3:
-        return "", "", count
-    firsts = [person_first(p) for p in people]
-    first = " ja ".join([", ".join(firsts[:-1]), firsts[-1]] if count == 3 else firsts)
-    return first, ", ".join(person_full(p) for p in people), count
+    chosen = people[0]
+    if len(people) > 1:
+        for em in emails:
+            local = ascii_low(em.split("@")[0])
+            scores = [email_score(p, local) for p in people]
+            best = max(scores)
+            if best > 0 and scores.count(best) == 1:
+                chosen = people[scores.index(best)]
+                break
+    return person_first(chosen), person_full(chosen), count
 
 
 def pick(rec, codes, forms, cutoff, exclude=()):
