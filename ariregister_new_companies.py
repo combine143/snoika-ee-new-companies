@@ -17,9 +17,10 @@ Examples
   python3 ariregister_new_companies.py --emtak 73111 --days 3 \
       --webhook https://YOUR-N8N/webhook/ee-new-companies
 
-Contact name: the first name is filled only when the company has exactly one active
-natural-person board member (role JUHL). With several board members, or a legal entity on
-the board, first_name stays empty and the email falls back to a company greeting.
+Contact name: one active natural-person board member (role JUHL) gives that first name. With
+2-3 board members the one matching the mailbox name is used, otherwise all are joined with
+" ja ". A legal entity on the board or more than 3 people leaves first_name empty and the
+email falls back to a company greeting.
 
 Dedup is NOT done here: the --days window overlaps between runs on purpose, so the
 receiving workflow must drop registry codes it has already processed.
@@ -32,6 +33,7 @@ import re
 import shutil
 import sys
 import tempfile
+import unicodedata
 import urllib.request
 import zipfile
 from datetime import date, datetime, timedelta
@@ -124,8 +126,39 @@ def nice_name(word):
     return word
 
 
-def contact_from(rec):
-    """Return (first_name, full_name, board_members) for one record of the persons file."""
+def ascii_low(text):
+    text = unicodedata.normalize("NFKD", str(text or ""))
+    return "".join(ch for ch in text if not unicodedata.combining(ch)).lower()
+
+
+def email_score(person, local):
+    """2 points when a first-name token is in the mailbox name, 1 when a surname token is."""
+    score = 0
+    for tok in re.split(r"[\s-]+", ascii_low(person.get("eesnimi"))):
+        if len(tok) >= 3 and tok in local:
+            score = 2
+    if score < 2:
+        for tok in re.split(r"[\s-]+", ascii_low(person.get("nimi_arinimi"))):
+            if len(tok) >= 3 and tok in local:
+                score = max(score, 1)
+    return score
+
+
+def person_first(p):
+    return nice_name((p["eesnimi"].split() or [""])[0])
+
+
+def person_full(p):
+    return (nice_name(p["eesnimi"]) + " " + nice_name(p.get("nimi_arinimi"))).strip()
+
+
+def contact_from(rec, emails=()):
+    """Return (first_name, full_name, board_members) for one record of the persons file.
+
+    One active natural-person board member (role JUHL): that person. Several: the one whose
+    name matches the mailbox (e.g. maarouf.sara@ -> Sara Maarouf), otherwise all of them
+    joined with " ja " (up to 3). A legal entity on the board, or more than 3 people: empty.
+    """
     people, seen = [], set()
     for p in rec.get("kaardile_kantud_isikud") or []:
         if p.get("isiku_roll") != "JUHL" or p.get("lopp_kpv"):
@@ -136,12 +169,20 @@ def contact_from(rec):
         seen.add(key)
         people.append(p)
     count = len(people)
-    if count == 1 and people[0].get("isiku_tyyp") == "F" and people[0].get("eesnimi"):
-        p = people[0]
-        first = nice_name((p["eesnimi"].split() or [""])[0])
-        full = (nice_name(p["eesnimi"]) + " " + nice_name(p.get("nimi_arinimi"))).strip()
-        return first, full, count
-    return "", "", count
+    if not people or count > 3 or any(p.get("isiku_tyyp") != "F" or not p.get("eesnimi") for p in people):
+        return "", "", count
+    if count == 1:
+        return person_first(people[0]), person_full(people[0]), count
+    for em in emails:
+        local = ascii_low(em.split("@")[0])
+        scores = [email_score(p, local) for p in people]
+        best = max(scores)
+        if best > 0 and scores.count(best) == 1:
+            p = people[scores.index(best)]
+            return person_first(p), person_full(p), count
+    firsts = [person_first(p) for p in people]
+    first = " ja ".join([", ".join(firsts[:-1]), firsts[-1]] if count == 3 else firsts)
+    return first, ", ".join(person_full(p) for p in people), count
 
 
 def pick(rec, codes, forms, cutoff, exclude=()):
@@ -205,11 +246,13 @@ def first_json(zf):
 
 def add_contacts(results, persons_path):
     wanted = {str(r["registry_code"]) for r in results}
+    emails = {str(r["registry_code"]): [r["email"]] + list(r["other_emails"]) for r in results if r["email"]}
     found = {}
     with zipfile.ZipFile(persons_path) as zf:
         with zf.open(first_json(zf)) as fh:
             for rec in iter_wanted(fh, wanted):
-                found[str(rec.get("ariregistri_kood"))] = contact_from(rec)
+                code = str(rec.get("ariregistri_kood"))
+                found[code] = contact_from(rec, emails.get(code, ()))
     for r in results:
         first, full, count = found.get(str(r["registry_code"]), ("", "", 0))
         r["first_name"], r["contact_name"], r["board_members"] = first, full, count
