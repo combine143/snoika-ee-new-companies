@@ -157,7 +157,8 @@ def contact_from(rec, emails=()):
 
     One active natural-person board member (role JUHL): that person. Several: the one whose
     name matches the mailbox (e.g. maarouf.sara@ -> Sara Maarouf), otherwise all of them
-    joined with " ja " (up to 3). A legal entity on the board, or more than 3 people: empty.
+    joined with " ja " (up to 3). With more than 3 people only a mailbox match counts. A legal
+    entity on the board, or no match among more than 3 people: empty.
     """
     people, seen = [], set()
     for p in rec.get("kaardile_kantud_isikud") or []:
@@ -169,7 +170,7 @@ def contact_from(rec, emails=()):
         seen.add(key)
         people.append(p)
     count = len(people)
-    if not people or count > 3 or any(p.get("isiku_tyyp") != "F" or not p.get("eesnimi") for p in people):
+    if not people or any(p.get("isiku_tyyp") != "F" or not p.get("eesnimi") for p in people):
         return "", "", count
     if count == 1:
         return person_first(people[0]), person_full(people[0]), count
@@ -180,6 +181,8 @@ def contact_from(rec, emails=()):
         if best > 0 and scores.count(best) == 1:
             p = people[scores.index(best)]
             return person_first(p), person_full(p), count
+    if count > 3:
+        return "", "", count
     firsts = [person_first(p) for p in people]
     first = " ja ".join([", ".join(firsts[:-1]), firsts[-1]] if count == 3 else firsts)
     return first, ", ".join(person_full(p) for p in people), count
